@@ -380,7 +380,7 @@ Parkinson-Disease-Detection/
 
 Clone Repository
 
-github link: [https://github.com/9154327992/Parkinson-Disease-Detection]
+github link: [https://github.com/matta-venkata-karthik/Parkinson-Disease-Detection]
 
 -----------------------------------------------------------------------------------------------------------------------------------
 
@@ -566,4 +566,4 @@ Matta Venkata Karthik
 
 🏫 College LinkedIn: https://www.linkedin.com/company/datascience-nriit
 
-💻 GitHub: https://github.com/9154327992
+💻 GitHub: https://github.com/matta-venkata-karthik
