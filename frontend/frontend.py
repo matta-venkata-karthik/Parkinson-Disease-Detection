@@ -1,16 +1,21 @@
-import streamlit as st
+import base64
+import time
 from pathlib import Path
+
+import streamlit as st
 
 from utils.api_client import (
     get_analytics,
     get_patient_history,
     get_reports,
     get_api_url,
+    health_check,
 )
 
 from utils.session import (
     initialize_session,
 )
+
 
 # ==========================================================
 # Project Paths
@@ -18,35 +23,31 @@ from utils.session import (
 
 FRONTEND_DIR = Path(__file__).resolve().parent
 
-
 ASSETS_DIR = (
     FRONTEND_DIR
     / "assets"
 )
-
 
 IMAGES_DIR = (
     ASSETS_DIR
     / "images"
 )
 
-
 FAVICON_PATH = (
     ASSETS_DIR
     / "favicon.ico"
 )
-
 
 LOGO_PATH = (
     ASSETS_DIR
     / "logo.png"
 )
 
-
 FRONTEND_BANNER = (
     IMAGES_DIR
     / "frontend_banner.png"
 )
+
 
 # ==========================================================
 # Page Configuration
@@ -78,7 +79,6 @@ if LOGO_PATH.exists():
         )
 
     except Exception:
-
         pass
 
 
@@ -88,29 +88,128 @@ if LOGO_PATH.exists():
 
 initialize_session()
 
+
+# ==========================================================
+# Backend Connection
+# ==========================================================
+
+def check_backend_connection():
+    """
+    Check and wake the FastAPI backend.
+
+    The frontend automatically calls the backend health
+    endpoint when the Streamlit session starts.
+
+    The function makes several attempts because Render may
+    need some time to wake a sleeping service.
+    """
+
+    # Do not repeatedly wake the backend on every Streamlit
+    # rerun during the same browser session.
+    if st.session_state.get(
+        "backend_checked",
+        False,
+    ):
+
+        return st.session_state.get(
+            "backend_available",
+            False,
+        )
+
+    st.session_state[
+        "backend_checked"
+    ] = True
+
+    st.session_state[
+        "backend_available"
+    ] = False
+
+    max_attempts = 4
+
+    for attempt in range(
+        1,
+        max_attempts + 1,
+    ):
+
+        try:
+
+            result = health_check()
+
+            # Support either:
+            # True
+            # {"status": "healthy"}
+            # {"status": "ok"}
+            if result is True:
+
+                st.session_state[
+                    "backend_available"
+                ] = True
+
+                return True
+
+            if isinstance(
+                result,
+                dict,
+            ):
+
+                status = str(
+                    result.get(
+                        "status",
+                        "",
+                    )
+                ).lower()
+
+                if status in {
+                    "healthy",
+                    "ok",
+                    "online",
+                    "running",
+                    "success",
+                }:
+
+                    st.session_state[
+                        "backend_available"
+                    ] = True
+
+                    return True
+
+        except Exception:
+            pass
+
+        # Give Render time to wake up before trying again.
+        if attempt < max_attempts:
+
+            time.sleep(
+                attempt * 2
+            )
+
+    return False
+
+
+# ==========================================================
+# Start Backend Connection
+# ==========================================================
+
+with st.spinner(
+    "🔄 Connecting to backend..."
+):
+
+    backend_available = (
+        check_backend_connection()
+    )
+
+
 # ==========================================================
 # Frontend Banner
 # ==========================================================
 
-FRONTEND_BANNER = (
-    Path(__file__).resolve().parent
-    / "assets"
-    / "images"
-    / "frontend_banner.png"
-)
-
-
 if FRONTEND_BANNER.exists():
-
-    import base64
-
 
     banner_base64 = base64.b64encode(
         FRONTEND_BANNER.read_bytes()
     ).decode(
         "utf-8"
     )
-
 
     st.html(
         f"""
@@ -122,32 +221,15 @@ if FRONTEND_BANNER.exists():
             padding: 0;
         }}
 
-
         .frontend-banner {{
-            /*
-            Responsive behavior:
-            - Smaller on low-resolution screens
-            - Larger on high-resolution screens
-            - No image cropping
-            - Original aspect ratio preserved
-            */
-
             width: min(100%, 1600px);
-
             height: auto;
-
             display: block;
-
             margin-left: auto;
             margin-right: auto;
-
             object-fit: contain;
-
             border-radius: 12px;
         }}
-
-
-        /* Small screens */
 
         @media (max-width: 768px) {{
 
@@ -157,19 +239,14 @@ if FRONTEND_BANNER.exists():
 
         }}
 
-
-        /* Medium screens */
-
-        @media (min-width: 769px) and (max-width: 1400px) {{
+        @media (min-width: 769px)
+        and (max-width: 1400px) {{
 
             .frontend-banner {{
                 width: 100%;
             }}
 
         }}
-
-
-        /* Large / high-resolution screens */
 
         @media (min-width: 1401px) {{
 
@@ -181,7 +258,6 @@ if FRONTEND_BANNER.exists():
         }}
 
         </style>
-
 
         <div class="frontend-banner-wrapper">
 
@@ -195,12 +271,12 @@ if FRONTEND_BANNER.exists():
         """
     )
 
-
 else:
 
     st.warning(
         "Frontend banner image was not found."
     )
+
 
 # ==========================================================
 # Helper Functions
@@ -218,7 +294,6 @@ def safe_list(value):
 
         return value
 
-
     if isinstance(
         value,
         dict,
@@ -233,7 +308,6 @@ def safe_list(value):
             or value.get("reports")
             or []
         )
-
 
     return []
 
@@ -253,7 +327,6 @@ def get_metric(
     ):
 
         return default
-
 
     for key in keys:
 
@@ -276,8 +349,8 @@ def get_metric(
 
                 return default
 
-
     return default
+
 
 # ==========================================================
 # Header
@@ -302,7 +375,9 @@ st.divider()
 # Authentication
 # ==========================================================
 
-st.session_state["logged_in"] = True
+st.session_state[
+    "logged_in"
+] = True
 
 username = st.session_state.get(
     "username",
@@ -328,7 +403,6 @@ role = st.session_state.get(
     "role",
     "User",
 )
-
 
 st.success(
     f"Welcome, {username}"
@@ -367,7 +441,6 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
-
     st.markdown(
         """
         <div style="
@@ -385,23 +458,50 @@ with st.sidebar:
             opacity:0.7;
             margin-bottom:15px;
         ">
-            Parkinson Disease Detection Agent
+            AI-assisted Parkinson's screening platform
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-
     st.divider()
 
+    # ------------------------------------------------------
+    # Backend Status
+    # ------------------------------------------------------
+
+    if backend_available:
+
+        st.success(
+            "🟢 Backend Connected"
+        )
+
+    else:
+
+        st.error(
+            "🔴 Backend Unavailable"
+        )
+
+        if st.button(
+            "🔄 Retry Backend",
+            use_container_width=True,
+        ):
+
+            st.session_state[
+                "backend_checked"
+            ] = False
+
+            st.rerun()
 
     st.caption(
         f"Backend: {get_api_url()}"
     )
 
-
     st.divider()
 
+    # ------------------------------------------------------
+    # Navigation
+    # ------------------------------------------------------
 
     st.markdown(
         "### 🧭 Quick Navigation"
@@ -412,9 +512,7 @@ with st.sidebar:
         "different sections of the application."
     )
 
-
     st.divider()
-
 
     st.caption(
         f"👤 User: {username}"
@@ -429,35 +527,64 @@ with st.sidebar:
 # Load Dashboard Data
 # ==========================================================
 
-with st.spinner(
-    "Loading dashboard..."
-):
-
-    try:
-
-        analytics = get_analytics()
-
-    except Exception:
-
-        analytics = {}
+analytics = {}
+history = []
+reports = []
 
 
-    try:
+if backend_available:
 
-        history = get_patient_history()
+    with st.spinner(
+        "Loading dashboard..."
+    ):
 
-    except Exception:
+        # --------------------------------------------------
+        # Analytics
+        # --------------------------------------------------
 
-        history = []
+        try:
 
+            analytics = get_analytics()
 
-    try:
+        except Exception:
 
-        reports = get_reports()
+            analytics = {}
 
-    except Exception:
+        # --------------------------------------------------
+        # Patient History
+        # --------------------------------------------------
 
-        reports = []
+        try:
+
+            history = get_patient_history()
+
+        except Exception:
+
+            history = []
+
+        # --------------------------------------------------
+        # Reports
+        # --------------------------------------------------
+
+        try:
+
+            reports = get_reports()
+
+        except Exception:
+
+            reports = []
+
+else:
+
+    st.warning(
+        """
+        ⚠️ The FastAPI backend is currently unavailable.
+
+        The frontend could not connect to:
+
+        """
+        + get_api_url()
+    )
 
 
 # ==========================================================
@@ -521,7 +648,6 @@ history_prediction_count = len(
     history_list
 )
 
-
 analytics_prediction_count = get_metric(
     prediction_data,
     [
@@ -530,7 +656,6 @@ analytics_prediction_count = get_metric(
     0,
 )
 
-
 analytics_dashboard_predictions = get_metric(
     dashboard_data,
     [
@@ -538,7 +663,6 @@ analytics_dashboard_predictions = get_metric(
     ],
     0,
 )
-
 
 total_predictions = (
     history_prediction_count
@@ -554,7 +678,6 @@ total_predictions = (
 total_reports = len(
     reports_list
 )
-
 
 if total_reports == 0:
 
@@ -579,14 +702,12 @@ total_patients = get_metric(
     0,
 )
 
-
 if total_patients == 0:
 
     patient_data = analytics.get(
         "patient",
         {},
     )
-
 
     if isinstance(
         patient_data,
@@ -616,7 +737,6 @@ high_risk = get_metric(
     0,
 )
 
-
 medium_risk = get_metric(
     dashboard_data,
     [
@@ -625,7 +745,6 @@ medium_risk = get_metric(
     ],
     0,
 )
-
 
 low_risk = get_metric(
     dashboard_data,
@@ -644,7 +763,6 @@ low_risk = get_metric(
 st.subheader(
     "📊 Dashboard Overview"
 )
-
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -692,7 +810,6 @@ st.subheader(
     "⚠️ Risk Overview"
 )
 
-
 risk_col1, risk_col2, risk_col3 = (
     st.columns(3)
 )
@@ -732,7 +849,6 @@ st.divider()
 st.subheader(
     "🚀 Quick Actions"
 )
-
 
 action1, action2, action3, action4 = (
     st.columns(4)
@@ -805,7 +921,6 @@ if history_list:
 
     rows = []
 
-
     for item in recent:
 
         if not isinstance(
@@ -815,13 +930,11 @@ if history_list:
 
             continue
 
-
         patient_name = (
             item.get("patient_name")
             or item.get("name")
             or "Unknown"
         )
-
 
         diagnosis = (
             item.get("diagnosis")
@@ -830,18 +943,15 @@ if history_list:
             or "Unknown"
         )
 
-
         risk_level = (
             item.get("risk_level")
             or item.get("risk_category")
             or "Unknown"
         )
 
-
         risk_score = item.get(
             "risk_score"
         )
-
 
         created_at = (
             item.get("created_at")
@@ -850,9 +960,7 @@ if history_list:
             or "N/A"
         )
 
-
         formatted_risk_score = "N/A"
-
 
         if risk_score is not None:
 
@@ -870,7 +978,6 @@ if history_list:
                 formatted_risk_score = str(
                     risk_score
                 )
-
 
         rows.append(
             {
@@ -890,7 +997,6 @@ if history_list:
                     created_at,
             }
         )
-
 
     if rows:
 
@@ -924,15 +1030,18 @@ st.subheader(
     "💻 System Status"
 )
 
-
 status1, status2, status3, status4 = (
     st.columns(4)
 )
 
 
+# ----------------------------------------------------------
+# Backend / Analytics
+# ----------------------------------------------------------
+
 with status1:
 
-    if analytics is not None:
+    if backend_available and analytics is not None:
 
         st.success(
             "🟢 Analytics"
@@ -945,9 +1054,13 @@ with status1:
         )
 
 
+# ----------------------------------------------------------
+# Predictions
+# ----------------------------------------------------------
+
 with status2:
 
-    if history is not None:
+    if backend_available and history is not None:
 
         st.success(
             "🟢 Predictions"
@@ -960,9 +1073,13 @@ with status2:
         )
 
 
+# ----------------------------------------------------------
+# Reports
+# ----------------------------------------------------------
+
 with status3:
 
-    if reports is not None:
+    if backend_available and reports is not None:
 
         st.success(
             "🟢 Reports"
@@ -975,11 +1092,23 @@ with status3:
         )
 
 
+# ----------------------------------------------------------
+# AI Assistant
+# ----------------------------------------------------------
+
 with status4:
 
-    st.success(
-        "🟢 AI Assistant"
-    )
+    if backend_available:
+
+        st.success(
+            "🟢 AI Assistant"
+        )
+
+    else:
+
+        st.error(
+            "🔴 AI Assistant"
+        )
 
 
 st.divider()
@@ -992,7 +1121,6 @@ st.divider()
 st.subheader(
     "ℹ️ About"
 )
-
 
 st.markdown(
     """
