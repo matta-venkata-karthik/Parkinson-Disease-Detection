@@ -2,6 +2,7 @@ import base64
 import time
 from pathlib import Path
 
+import requests
 import streamlit as st
 
 from utils.api_client import (
@@ -9,212 +10,174 @@ from utils.api_client import (
     get_patient_history,
     get_reports,
     get_api_url,
-    health_check,
 )
 
-from utils.session import (
-    initialize_session,
-)
+from utils.session import initialize_session
 
 
 # ==========================================================
-# Project Paths
+# PROJECT PATHS
 # ==========================================================
 
 FRONTEND_DIR = Path(__file__).resolve().parent
+ASSETS_DIR = FRONTEND_DIR / "assets"
+IMAGES_DIR = ASSETS_DIR / "images"
 
-ASSETS_DIR = (
-    FRONTEND_DIR
-    / "assets"
-)
-
-IMAGES_DIR = (
-    ASSETS_DIR
-    / "images"
-)
-
-FAVICON_PATH = (
-    ASSETS_DIR
-    / "favicon.ico"
-)
-
-LOGO_PATH = (
-    ASSETS_DIR
-    / "logo.png"
-)
-
-FRONTEND_BANNER = (
-    IMAGES_DIR
-    / "frontend_banner.png"
-)
+FAVICON_PATH = ASSETS_DIR / "favicon.ico"
+LOGO_PATH = ASSETS_DIR / "logo.png"
+FRONTEND_BANNER = IMAGES_DIR / "frontend_banner.png"
 
 
 # ==========================================================
-# Page Configuration
+# PAGE CONFIGURATION
 # ==========================================================
 
 st.set_page_config(
     page_title="Parkinson Disease Detection Agent",
-    page_icon=(
-        str(FAVICON_PATH)
-        if FAVICON_PATH.exists()
-        else "🧠"
-    ),
+    page_icon=str(FAVICON_PATH) if FAVICON_PATH.exists() else "🧠",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 
 # ==========================================================
-# Application Logo
+# LOGO
 # ==========================================================
 
 if LOGO_PATH.exists():
-
     try:
-
-        st.logo(
-            str(LOGO_PATH),
-            size="large",
-        )
-
+        st.logo(str(LOGO_PATH), size="large")
     except Exception:
         pass
 
 
 # ==========================================================
-# Initialize Session
+# INITIALIZE SESSION
 # ==========================================================
 
 initialize_session()
 
 
 # ==========================================================
-# Backend Connection
+# BACKEND CONNECTION
 # ==========================================================
 
-def check_backend_connection():
+def check_backend_connection(
+    max_attempts=4,
+    force_check=False,
+):
     """
-    Check and wake the FastAPI backend.
+    Check the Render FastAPI backend.
 
-    The frontend automatically calls the backend health
-    endpoint when the Streamlit session starts.
-
-    The function makes several attempts because Render may
-    need some time to wake a sleeping service.
+    Makes several attempts to allow a sleeping Render
+    service time to wake up. Stores the result in the
+    Streamlit session to avoid checking on every rerun.
     """
 
-    # Do not repeatedly wake the backend on every Streamlit
-    # rerun during the same browser session.
-    if st.session_state.get(
-        "backend_checked",
-        False,
+    if (
+        not force_check
+        and st.session_state.get("backend_checked", False)
     ):
-
         return st.session_state.get(
             "backend_available",
             False,
         )
 
-    st.session_state[
-        "backend_checked"
-    ] = True
+    st.session_state["backend_checked"] = True
+    st.session_state["backend_available"] = False
 
-    st.session_state[
-        "backend_available"
-    ] = False
+    base_url = get_api_url().rstrip("/")
+    health_url = f"{base_url}/health"
 
-    max_attempts = 4
-
-    for attempt in range(
-        1,
-        max_attempts + 1,
-    ):
-
+    for attempt in range(1, max_attempts + 1):
         try:
+            response = requests.get(
+                health_url,
+                timeout=(10, 30),
+            )
 
-            result = health_check()
-
-            # Support either:
-            # True
-            # {"status": "healthy"}
-            # {"status": "ok"}
-            if result is True:
-
-                st.session_state[
-                    "backend_available"
-                ] = True
-
+            if response.ok:
+                st.session_state["backend_available"] = True
+                st.session_state["backend_last_error"] = None
                 return True
 
-            if isinstance(
-                result,
-                dict,
-            ):
-
-                status = str(
-                    result.get(
-                        "status",
-                        "",
-                    )
-                ).lower()
-
-                if status in {
-                    "healthy",
-                    "ok",
-                    "online",
-                    "running",
-                    "success",
-                }:
-
-                    st.session_state[
-                        "backend_available"
-                    ] = True
-
-                    return True
-
-        except Exception:
-            pass
-
-        # Give Render time to wake up before trying again.
-        if attempt < max_attempts:
-
-            time.sleep(
-                attempt * 2
+            error_message = (
+                f"Health endpoint returned HTTP "
+                f"{response.status_code}"
             )
+
+        except requests.exceptions.Timeout:
+            error_message = "Backend health check timed out."
+
+        except requests.exceptions.ConnectionError:
+            error_message = "Could not connect to the backend."
+
+        except requests.exceptions.RequestException as exc:
+            error_message = str(exc)
+
+        except Exception as exc:
+            error_message = str(exc)
+
+        st.session_state["backend_last_error"] = error_message
+
+        if attempt < max_attempts:
+            time.sleep(attempt * 2)
 
     return False
 
 
 # ==========================================================
-# Start Backend Connection
+# CONNECT TO BACKEND ON STARTUP
 # ==========================================================
 
-with st.spinner(
-    "🔄 Connecting to backend..."
-):
+# The retry button is shown before the connection check so
+# a user can initiate another attempt after a failure.
 
-    backend_available = (
-        check_backend_connection()
+force_backend_check = False
+
+if (
+    st.session_state.get("backend_checked", False)
+    and not st.session_state.get("backend_available", False)
+):
+    st.warning(
+        "The backend has not responded yet. "
+        "Render may still be starting the service."
+    )
+
+    if st.button(
+        "🔄 Retry Backend Connection",
+        key="retry_backend_startup",
+    ):
+        force_backend_check = True
+
+if (
+    not st.session_state.get("backend_checked", False)
+    or force_backend_check
+):
+    with st.spinner("🔄 Connecting to backend..."):
+        backend_available = check_backend_connection(
+            max_attempts=4,
+            force_check=force_backend_check,
+        )
+else:
+    backend_available = st.session_state.get(
+        "backend_available",
+        False,
     )
 
 
 # ==========================================================
-# Frontend Banner
+# RESPONSIVE FRONTEND BANNER
 # ==========================================================
 
 if FRONTEND_BANNER.exists():
-
     banner_base64 = base64.b64encode(
         FRONTEND_BANNER.read_bytes()
-    ).decode(
-        "utf-8"
-    )
+    ).decode("utf-8")
 
     st.html(
         f"""
         <style>
-
         .frontend-banner-wrapper {{
             width: 100%;
             margin: 0 0 1rem 0;
@@ -222,84 +185,54 @@ if FRONTEND_BANNER.exists():
         }}
 
         .frontend-banner {{
-            width: min(100%, 1600px);
+            width: 100%;
+            max-width: 1600px;
             height: auto;
             display: block;
-            margin-left: auto;
-            margin-right: auto;
+            margin: 0 auto;
             object-fit: contain;
             border-radius: 12px;
         }}
 
         @media (max-width: 768px) {{
-
             .frontend-banner {{
                 width: 100%;
             }}
-
         }}
 
-        @media (min-width: 769px)
-        and (max-width: 1400px) {{
-
-            .frontend-banner {{
-                width: 100%;
-            }}
-
-        }}
-
-        @media (min-width: 1401px) {{
-
+        @media (min-width: 769px) {{
             .frontend-banner {{
                 width: 100%;
                 max-width: 1600px;
             }}
-
         }}
-
         </style>
 
         <div class="frontend-banner-wrapper">
-
             <img
                 class="frontend-banner"
                 src="data:image/png;base64,{banner_base64}"
                 alt="Parkinson Disease Detection Agent"
             >
-
         </div>
         """
     )
-
 else:
-
-    st.warning(
-        "Frontend banner image was not found."
-    )
+    st.warning("Frontend banner image was not found.")
 
 
 # ==========================================================
-# Helper Functions
+# HELPER FUNCTIONS
 # ==========================================================
 
 def safe_list(value):
-    """
-    Convert common API responses into a list.
-    """
+    """Convert common API responses into a list."""
 
-    if isinstance(
-        value,
-        list,
-    ):
-
+    if isinstance(value, list):
         return value
 
-    if isinstance(
-        value,
-        dict,
-    ):
-
-        return (
+    if isinstance(value, dict):
+        result = (
             value.get("data")
             or value.get("items")
             or value.get("records")
@@ -309,56 +242,34 @@ def safe_list(value):
             or []
         )
 
+        return result if isinstance(result, list) else []
+
     return []
 
 
-def get_metric(
-    data,
-    keys,
-    default=0,
-):
-    """
-    Safely retrieve a numeric metric.
-    """
+def get_metric(data, keys, default=0):
+    """Safely retrieve a numeric metric."""
 
-    if not isinstance(
-        data,
-        dict,
-    ):
-
+    if not isinstance(data, dict):
         return default
 
     for key in keys:
-
-        value = data.get(
-            key
-        )
+        value = data.get(key)
 
         if value is not None:
-
             try:
-
-                return int(
-                    value
-                )
-
-            except (
-                TypeError,
-                ValueError,
-            ):
-
+                return int(float(value))
+            except (TypeError, ValueError, OverflowError):
                 return default
 
     return default
 
 
 # ==========================================================
-# Header
+# HEADER
 # ==========================================================
 
-st.title(
-    "🧠 Parkinson Disease Detection Agent"
-)
+st.title("🧠 Parkinson Disease Detection Agent")
 
 st.write(
     """
@@ -372,295 +283,139 @@ st.divider()
 
 
 # ==========================================================
-# Authentication
+# SESSION / USER INFORMATION
 # ==========================================================
 
-st.session_state[
-    "logged_in"
-] = True
+# Preserve the existing application's session behavior.
+# Replace this default authentication assignment with your
+# real login flow if authentication is handled elsewhere.
 
-username = st.session_state.get(
-    "username",
-    "User",
-)
+st.session_state["logged_in"] = True
 
-role = st.session_state.get(
-    "role",
-    "User",
-)
+username = st.session_state.get("username", "User")
+role = st.session_state.get("role", "User")
+
+st.success(f"Welcome, {username}")
 
 
 # ==========================================================
-# Logged-in Header
-# ==========================================================
-
-username = st.session_state.get(
-    "username",
-    "User",
-)
-
-role = st.session_state.get(
-    "role",
-    "User",
-)
-
-st.success(
-    f"Welcome, {username}"
-)
-
-
-# ==========================================================
-# Sidebar
+# SIDEBAR
 # ==========================================================
 
 with st.sidebar:
-
-    # ------------------------------------------------------
-    # Logo
-    # ------------------------------------------------------
-
-    if LOGO_PATH.exists():
-
-        st.image(
-            str(LOGO_PATH),
-            width=170,
-        )
-
-    else:
-
-        st.markdown(
-            """
-            <div style="
-                text-align:center;
-                font-size:42px;
-                padding:10px;
-            ">
-                🧠
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
     st.markdown(
-        """
-        <div style="
-            text-align:center;
-            font-weight:700;
-            font-size:18px;
-            margin-bottom:10px;
-        ">
-            Parkinson Disease Detection Agent
-        </div>
-
-        <div style="
-            text-align:center;
-            font-size:13px;
-            opacity:0.7;
-            margin-bottom:15px;
-        ">
-            AI-assisted Parkinson's screening platform
-        </div>
-        """,
+        '<div style="text-align:center; font-size:18px; '
+        'font-weight:700;">Parkinson Disease Detection Agent</div>',
         unsafe_allow_html=True,
     )
 
-    st.divider()
+    if LOGO_PATH.exists():
+        st.image(str(LOGO_PATH), width=170)
+    else:
+        st.markdown(
+            '<div style="text-align:center; font-size:42px;">🧠</div>',
+            unsafe_allow_html=True,
+        )
 
-    # ------------------------------------------------------
-    # Backend Status
-    # ------------------------------------------------------
+    st.divider()
 
     if backend_available:
-
-        st.success(
-            "🟢 Backend Connected"
-        )
-
+        st.success("🟢 Backend Connected")
     else:
+        st.error("🔴 Backend Unavailable")
 
-        st.error(
-            "🔴 Backend Unavailable"
+    st.caption(f"Backend: {get_api_url()}")
+
+    if not backend_available:
+        st.caption(
+            "The backend may be waking up or temporarily unavailable."
         )
 
-        if st.button(
-            "🔄 Retry Backend",
-            use_container_width=True,
-        ):
+    st.divider()
 
-            st.session_state[
-                "backend_checked"
-            ] = False
-
-            st.rerun()
-
+    st.markdown("### 🧭 Quick Navigation")
     st.caption(
-        f"Backend: {get_api_url()}"
+        "Use the navigation menu to open the different sections "
+        "of the application."
     )
 
     st.divider()
-
-    # ------------------------------------------------------
-    # Navigation
-    # ------------------------------------------------------
-
-    st.markdown(
-        "### 🧭 Quick Navigation"
-    )
-
-    st.caption(
-        "Use the navigation menu to open the "
-        "different sections of the application."
-    )
-
-    st.divider()
-
-    st.caption(
-        f"👤 User: {username}"
-    )
-
-    st.caption(
-        f"🔐 Role: {role}"
-    )
+    st.caption(f"👤 User: {username}")
+    st.caption(f"🔐 Role: {role}")
 
 
 # ==========================================================
-# Load Dashboard Data
+# LOAD DASHBOARD DATA
 # ==========================================================
 
 analytics = {}
 history = []
 reports = []
 
+analytics_loaded = False
+history_loaded = False
+reports_loaded = False
 
 if backend_available:
-
-    with st.spinner(
-        "Loading dashboard..."
-    ):
-
-        # --------------------------------------------------
-        # Analytics
-        # --------------------------------------------------
-
+    with st.spinner("Loading dashboard..."):
         try:
-
             analytics = get_analytics()
-
+            analytics_loaded = analytics is not None
         except Exception:
-
             analytics = {}
 
-        # --------------------------------------------------
-        # Patient History
-        # --------------------------------------------------
-
         try:
-
             history = get_patient_history()
-
+            history_loaded = history is not None
         except Exception:
-
             history = []
 
-        # --------------------------------------------------
-        # Reports
-        # --------------------------------------------------
-
         try:
-
             reports = get_reports()
-
+            reports_loaded = reports is not None
         except Exception:
-
             reports = []
-
 else:
-
     st.warning(
-        """
-        ⚠️ The FastAPI backend is currently unavailable.
-
-        The frontend could not connect to:
-
-        """
-        + get_api_url()
+        "⚠️ The backend is currently unavailable. "
+        "Dashboard data may be empty until the backend responds."
     )
 
 
 # ==========================================================
-# Normalize Data
+# NORMALIZE DATA
 # ==========================================================
 
-history_list = safe_list(
-    history
-)
+history_list = safe_list(history)
+reports_list = safe_list(reports)
 
-reports_list = safe_list(
-    reports
-)
-
-
-if not isinstance(
-    analytics,
-    dict,
-):
-
+if not isinstance(analytics, dict):
     analytics = {}
 
-
-dashboard_data = analytics.get(
-    "dashboard",
-    {},
-)
-
-
-if not isinstance(
-    dashboard_data,
-    dict,
-):
-
+dashboard_data = analytics.get("dashboard", {})
+if not isinstance(dashboard_data, dict):
     dashboard_data = {}
 
-
-prediction_data = analytics.get(
-    "prediction",
-    {},
-)
-
-
-if not isinstance(
-    prediction_data,
-    dict,
-):
-
+prediction_data = analytics.get("prediction", {})
+if not isinstance(prediction_data, dict):
     prediction_data = {}
 
 
 # ==========================================================
-# Calculate Real Values
+# CALCULATE DASHBOARD METRICS
 # ==========================================================
 
-# ----------------------------------------------------------
-# Predictions
-# ----------------------------------------------------------
-
-history_prediction_count = len(
-    history_list
-)
+history_prediction_count = len(history_list)
 
 analytics_prediction_count = get_metric(
     prediction_data,
-    [
-        "total_predictions",
-    ],
+    ["total_predictions"],
     0,
 )
 
 analytics_dashboard_predictions = get_metric(
     dashboard_data,
-    [
-        "total_predictions",
-    ],
+    ["total_predictions"],
     0,
 )
 
@@ -670,264 +425,132 @@ total_predictions = (
     or analytics_dashboard_predictions
 )
 
-
-# ----------------------------------------------------------
-# Reports
-# ----------------------------------------------------------
-
-total_reports = len(
-    reports_list
-)
+total_reports = len(reports_list)
 
 if total_reports == 0:
-
     total_reports = get_metric(
         dashboard_data,
-        [
-            "total_reports",
-        ],
+        ["total_reports"],
         0,
     )
 
-
-# ----------------------------------------------------------
-# Patients
-# ----------------------------------------------------------
-
 total_patients = get_metric(
     dashboard_data,
-    [
-        "total_patients",
-    ],
+    ["total_patients"],
     0,
 )
 
 if total_patients == 0:
+    patient_data = analytics.get("patient", {})
 
-    patient_data = analytics.get(
-        "patient",
-        {},
-    )
-
-    if isinstance(
-        patient_data,
-        dict,
-    ):
-
+    if isinstance(patient_data, dict):
         total_patients = get_metric(
             patient_data,
-            [
-                "total_patients",
-                "count",
-            ],
+            ["total_patients", "count"],
             0,
         )
 
-
-# ----------------------------------------------------------
-# Risk
-# ----------------------------------------------------------
-
 high_risk = get_metric(
     dashboard_data,
-    [
-        "high_risk_cases",
-        "high_risk",
-    ],
+    ["high_risk_cases", "high_risk"],
     0,
 )
 
 medium_risk = get_metric(
     dashboard_data,
-    [
-        "medium_risk_cases",
-        "medium_risk",
-    ],
+    ["medium_risk_cases", "medium_risk"],
     0,
 )
 
 low_risk = get_metric(
     dashboard_data,
-    [
-        "low_risk_cases",
-        "low_risk",
-    ],
+    ["low_risk_cases", "low_risk"],
     0,
 )
 
 
 # ==========================================================
-# Main Dashboard
+# DASHBOARD OVERVIEW
 # ==========================================================
 
-st.subheader(
-    "📊 Dashboard Overview"
-)
+st.subheader("📊 Dashboard Overview")
 
 col1, col2, col3, col4 = st.columns(4)
 
-
 with col1:
-
-    st.metric(
-        "👤 Patients",
-        total_patients,
-    )
-
+    st.metric("👤 Patients", total_patients)
 
 with col2:
-
-    st.metric(
-        "🧠 Predictions",
-        total_predictions,
-    )
-
+    st.metric("🧠 Predictions", total_predictions)
 
 with col3:
-
-    st.metric(
-        "📄 Reports",
-        total_reports,
-    )
-
+    st.metric("📄 Reports", total_reports)
 
 with col4:
-
-    st.metric(
-        "⚠️ High Risk",
-        high_risk,
-    )
-
+    st.metric("⚠️ High Risk", high_risk)
 
 st.divider()
 
 
 # ==========================================================
-# Risk Overview
+# RISK OVERVIEW
 # ==========================================================
 
-st.subheader(
-    "⚠️ Risk Overview"
-)
+st.subheader("⚠️ Risk Overview")
 
-risk_col1, risk_col2, risk_col3 = (
-    st.columns(3)
-)
-
+risk_col1, risk_col2, risk_col3 = st.columns(3)
 
 with risk_col1:
-
-    st.metric(
-        "🔴 High Risk",
-        high_risk,
-    )
-
+    st.metric("🔴 High Risk", high_risk)
 
 with risk_col2:
-
-    st.metric(
-        "🟠 Medium Risk",
-        medium_risk,
-    )
-
+    st.metric("🟠 Medium Risk", medium_risk)
 
 with risk_col3:
-
-    st.metric(
-        "🟢 Low Risk",
-        low_risk,
-    )
-
+    st.metric("🟢 Low Risk", low_risk)
 
 st.divider()
 
 
 # ==========================================================
-# Quick Actions
+# QUICK ACTIONS
 # ==========================================================
 
-st.subheader(
-    "🚀 Quick Actions"
-)
+st.subheader("🚀 Quick Actions")
 
-action1, action2, action3, action4 = (
-    st.columns(4)
-)
-
+action1, action2, action3, action4 = st.columns(4)
 
 with action1:
-
-    if st.button(
-        "🩺 New Prediction",
-        use_container_width=True,
-    ):
-
-        st.switch_page(
-            "pages/2_Prediction.py"
-        )
-
+    if st.button("🩺 New Prediction", use_container_width=True):
+        st.switch_page("pages/2_Prediction.py")
 
 with action2:
-
-    if st.button(
-        "📋 Patient History",
-        use_container_width=True,
-    ):
-
-        st.switch_page(
-            "pages/3_Patient_History.py"
-        )
-
+    if st.button("📋 Patient History", use_container_width=True):
+        st.switch_page("pages/3_Patient_History.py")
 
 with action3:
-
-    if st.button(
-        "📄 Reports",
-        use_container_width=True,
-    ):
-
-        st.switch_page(
-            "pages/5_Reports.py"
-        )
-
+    if st.button("📄 Reports", use_container_width=True):
+        st.switch_page("pages/5_Reports.py")
 
 with action4:
-
-    if st.button(
-        "📊 Analytics",
-        use_container_width=True,
-    ):
-
-        st.switch_page(
-            "pages/6_Analytics.py"
-        )
-
+    if st.button("📊 Analytics", use_container_width=True):
+        st.switch_page("pages/6_Analytics.py")
 
 st.divider()
 
 
 # ==========================================================
-# Recent Predictions
+# RECENT PREDICTIONS
 # ==========================================================
 
-st.subheader(
-    "📝 Recent Predictions"
-)
-
+st.subheader("📝 Recent Predictions")
 
 if history_list:
-
     recent = history_list[:5]
-
     rows = []
 
     for item in recent:
-
-        if not isinstance(
-            item,
-            dict,
-        ):
-
+        if not isinstance(item, dict):
             continue
 
         patient_name = (
@@ -949,9 +572,7 @@ if history_list:
             or "Unknown"
         )
 
-        risk_score = item.get(
-            "risk_score"
-        )
+        risk_score = item.get("risk_score")
 
         created_at = (
             item.get("created_at")
@@ -963,164 +584,75 @@ if history_list:
         formatted_risk_score = "N/A"
 
         if risk_score is not None:
-
             try:
-
-                formatted_risk_score = (
-                    f"{float(risk_score):.2f}%"
-                )
-
-            except (
-                TypeError,
-                ValueError,
-            ):
-
-                formatted_risk_score = str(
-                    risk_score
-                )
+                formatted_risk_score = f"{float(risk_score):.2f}%"
+            except (TypeError, ValueError):
+                formatted_risk_score = str(risk_score)
 
         rows.append(
             {
-                "Patient":
-                    patient_name,
-
-                "Diagnosis":
-                    diagnosis,
-
-                "Risk Level":
-                    risk_level,
-
-                "Risk Score":
-                    formatted_risk_score,
-
-                "Date":
-                    created_at,
+                "Patient": patient_name,
+                "Diagnosis": diagnosis,
+                "Risk Level": risk_level,
+                "Risk Score": formatted_risk_score,
+                "Date": created_at,
             }
         )
 
     if rows:
-
         st.dataframe(
             rows,
             use_container_width=True,
             hide_index=True,
         )
-
     else:
-
-        st.info(
-            "No prediction records available."
-        )
-
+        st.info("No prediction records available.")
 else:
-
-    st.info(
-        "No prediction history available yet."
-    )
-
+    st.info("No prediction history available yet.")
 
 st.divider()
 
 
 # ==========================================================
-# System Status
+# SYSTEM STATUS
 # ==========================================================
 
-st.subheader(
-    "💻 System Status"
-)
+st.subheader("💻 System Status")
 
-status1, status2, status3, status4 = (
-    st.columns(4)
-)
-
-
-# ----------------------------------------------------------
-# Backend / Analytics
-# ----------------------------------------------------------
+status1, status2, status3, status4 = st.columns(4)
 
 with status1:
-
-    if backend_available and analytics is not None:
-
-        st.success(
-            "🟢 Analytics"
-        )
-
+    if backend_available and analytics_loaded:
+        st.success("🟢 Analytics")
     else:
-
-        st.error(
-            "🔴 Analytics"
-        )
-
-
-# ----------------------------------------------------------
-# Predictions
-# ----------------------------------------------------------
+        st.error("🔴 Analytics")
 
 with status2:
-
-    if backend_available and history is not None:
-
-        st.success(
-            "🟢 Predictions"
-        )
-
+    if backend_available and history_loaded:
+        st.success("🟢 Predictions")
     else:
-
-        st.error(
-            "🔴 Predictions"
-        )
-
-
-# ----------------------------------------------------------
-# Reports
-# ----------------------------------------------------------
+        st.error("🔴 Predictions")
 
 with status3:
-
-    if backend_available and reports is not None:
-
-        st.success(
-            "🟢 Reports"
-        )
-
+    if backend_available and reports_loaded:
+        st.success("🟢 Reports")
     else:
-
-        st.error(
-            "🔴 Reports"
-        )
-
-
-# ----------------------------------------------------------
-# AI Assistant
-# ----------------------------------------------------------
+        st.error("🔴 Reports")
 
 with status4:
-
     if backend_available:
-
-        st.success(
-            "🟢 AI Assistant"
-        )
-
+        st.success("🟢 AI Assistant")
     else:
-
-        st.error(
-            "🔴 AI Assistant"
-        )
-
+        st.error("🔴 AI Assistant")
 
 st.divider()
 
 
 # ==========================================================
-# Information
+# ABOUT
 # ==========================================================
 
-st.subheader(
-    "ℹ️ About"
-)
+st.subheader("ℹ️ About")
 
 st.markdown(
     """
@@ -1137,42 +669,40 @@ This platform provides:
 - 🤖 AI Health Assistant
 - 🛠️ Administrator management
 
-**Important:** Prediction results are AI-assisted
-screening information and should not be treated as
-a medical diagnosis.
+**Important:** Prediction results are AI-assisted screening
+information and should not be treated as a medical diagnosis.
 """
 )
 
 
 # ==========================================================
-# Medical Disclaimer
+# MEDICAL DISCLAIMER
 # ==========================================================
 
 st.warning(
     """
 ⚠️ **Medical Disclaimer**
 
-This application provides educational and
-AI-assisted screening information.
+This application provides educational and AI-assisted
+screening information.
 
-Prediction results are not a diagnosis and should
-not replace professional medical advice, diagnosis,
-or treatment.
+Prediction results are not a diagnosis and should not replace
+professional medical advice, diagnosis, or treatment.
 
-If you have persistent or concerning symptoms,
-consult a qualified healthcare professional.
+If you have persistent or concerning symptoms, consult a
+qualified healthcare professional.
 """
 )
-
 
 st.divider()
 
 
 # ==========================================================
-# Footer
+# FOOTER
 # ==========================================================
 
 st.caption(
     "© 2026 Parkinson Disease Detection Agent | "
     "Streamlit + FastAPI + Scikit-learn"
 )
+```
