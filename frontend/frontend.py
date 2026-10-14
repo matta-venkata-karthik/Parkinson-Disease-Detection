@@ -191,8 +191,7 @@ def check_backend_connection():
 # ==========================================================
 
 with st.spinner(
-    "🔄 Connecting to backend...
-    It May Take a Minute"
+    "🔄 Connecting to backend..."
 ):
 
     backend_available = (
