@@ -2,7 +2,29 @@ import base64
 import time
 from pathlib import Path
 
-imp / "logo.png"
+import requests
+import streamlit as st
+
+from utils.api_client import (
+    get_analytics,
+    get_patient_history,
+    get_reports,
+    get_api_url,
+)
+
+from utils.session import initialize_session
+
+
+# ==========================================================
+# PROJECT PATHS
+# ==========================================================
+
+FRONTEND_DIR = Path(__file__).resolve().parent
+ASSETS_DIR = FRONTEND_DIR / "assets"
+IMAGES_DIR = ASSETS_DIR / "images"
+
+FAVICON_PATH = ASSETS_DIR / "favicon.ico"
+LOGO_PATH = ASSETS_DIR / "logo.png"
 FRONTEND_BANNER = IMAGES_DIR / "frontend_banner.png"
 
 
