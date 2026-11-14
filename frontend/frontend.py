@@ -27,6 +27,30 @@ FAVICON_PATH = ASSETS_DIR / "favicon.ico"
 LOGO_PATH = ASSETS_DIR / "logo.png"
 FRONTEND_BANNER = IMAGES_DIR / "frontend_banner.png"
 
+from PIL import Image
+
+st.write("### Image Diagnostics")
+
+for image_path in [
+    LOGO_PATH,
+    FRONTEND_BANNER,
+]:
+
+    st.write("File:", image_path.name)
+    st.write("Exists:", image_path.exists())
+
+    if image_path.exists():
+
+        st.write("File size:", image_path.stat().st_size, "bytes")
+
+        try:
+            with Image.open(image_path) as img:
+                img.verify()
+
+            st.success(f"{image_path.name} is a valid image")
+
+        except Exception as e:
+            st.error(f"Image problem: {e}")
 
 # ==========================================================
 # PAGE CONFIGURATION
