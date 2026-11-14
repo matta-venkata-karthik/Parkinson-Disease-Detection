@@ -705,4 +705,3 @@ st.caption(
     "© 2026 Parkinson Disease Detection Agent | "
     "Streamlit + FastAPI + Scikit-learn"
 )
-```
