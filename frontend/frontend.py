@@ -1,6 +1,6 @@
 import base64
 import time
-from pathlib impo
+from pathlib import Path
 
 import requests
 import streamlit as st
