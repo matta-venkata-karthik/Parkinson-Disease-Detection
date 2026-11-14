@@ -15,7 +15,6 @@ from app.routes.recommendation import router as recommendation_router
 from app.routes.reports import router as reports_router
 from app.routes.chatbot import router as chatbot_router
 
-
 # ==========================================================
 # Database Startup
 # ==========================================================
