@@ -1,4 +1,3 @@
-import base64
 import time
 from pathlib import Path
 
@@ -27,30 +26,6 @@ FAVICON_PATH = ASSETS_DIR / "favicon.ico"
 LOGO_PATH = ASSETS_DIR / "logo.png"
 FRONTEND_BANNER = IMAGES_DIR / "frontend_banner.png"
 
-from PIL import Image
-
-st.write("### Image Diagnostics")
-
-for image_path in [
-    LOGO_PATH,
-    FRONTEND_BANNER,
-]:
-
-    st.write("File:", image_path.name)
-    st.write("Exists:", image_path.exists())
-
-    if image_path.exists():
-
-        st.write("File size:", image_path.stat().st_size, "bytes")
-
-        try:
-            with Image.open(image_path) as img:
-                img.verify()
-
-            st.success(f"{image_path.name} is a valid image")
-
-        except Exception as e:
-            st.error(f"Image problem: {e}")
 
 # ==========================================================
 # PAGE CONFIGURATION
@@ -63,16 +38,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-
-# ==========================================================
-# LOGO
-# ==========================================================
-
-if LOGO_PATH.exists():
-    try:
-        st.logo(str(LOGO_PATH), size="large")
-    except Exception:
-        pass
 
 
 # ==========================================================
@@ -194,55 +159,20 @@ else:
 # RESPONSIVE FRONTEND BANNER
 # ==========================================================
 
-if FRONTEND_BANNER.exists():
-    banner_base64 = base64.b64encode(
-        FRONTEND_BANNER.read_bytes()
-    ).decode("utf-8")
-
-    st.html(
-        f"""
-        <style>
-        .frontend-banner-wrapper {{
-            width: 100%;
-            margin: 0 0 1rem 0;
-            padding: 0;
-        }}
-
-        .frontend-banner {{
-            width: 100%;
-            max-width: 1600px;
-            height: auto;
-            display: block;
-            margin: 0 auto;
-            object-fit: contain;
-            border-radius: 12px;
-        }}
-
-        @media (max-width: 768px) {{
-            .frontend-banner {{
-                width: 100%;
-            }}
-        }}
-
-        @media (min-width: 769px) {{
-            .frontend-banner {{
-                width: 100%;
-                max-width: 1600px;
-            }}
-        }}
-        </style>
-
-        <div class="frontend-banner-wrapper">
-            <img
-                class="frontend-banner"
-                src="data:image/png;base64,{banner_base64}"
-                alt="Parkinson Disease Detection Agent"
-            >
-        </div>
-        """
-    )
+if FRONTEND_BANNER.is_file():
+    try:
+        banner_bytes = FRONTEND_BANNER.read_bytes()
+        st.image(
+            banner_bytes,
+            caption=None,
+            use_container_width=True,
+        )
+    except Exception as exc:
+        st.warning(f"Unable to display frontend banner: {exc}")
 else:
-    st.warning("Frontend banner image was not found.")
+    st.warning(
+        f"Frontend banner not found: {FRONTEND_BANNER}"
+    )
 
 
 # ==========================================================
@@ -333,13 +263,18 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    if LOGO_PATH.exists():
-        st.image(str(LOGO_PATH), width=170)
+    if LOGO_PATH.is_file():
+        try:
+            logo_bytes = LOGO_PATH.read_bytes()
+            st.image(logo_bytes, width=170)
+        except Exception as exc:
+            st.warning(f"Unable to display logo.png: {exc}")
     else:
         st.markdown(
             '<div style="text-align:center; font-size:42px;">🧠</div>',
             unsafe_allow_html=True,
         )
+        st.caption(f"Logo file not found: {LOGO_PATH}")
 
     st.divider()
 
