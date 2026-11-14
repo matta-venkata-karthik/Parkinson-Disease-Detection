@@ -161,18 +161,16 @@ else:
 
 if FRONTEND_BANNER.is_file():
     try:
-        banner_bytes = FRONTEND_BANNER.read_bytes()
+        # Use the actual file path. Streamlit reads and serves the image.
         st.image(
-            banner_bytes,
+            str(FRONTEND_BANNER),
             caption=None,
             use_container_width=True,
         )
     except Exception as exc:
         st.warning(f"Unable to display frontend banner: {exc}")
 else:
-    st.warning(
-        f"Frontend banner not found: {FRONTEND_BANNER}"
-    )
+    st.warning(f"Frontend banner not found: {FRONTEND_BANNER}")
 
 
 # ==========================================================
@@ -265,8 +263,12 @@ with st.sidebar:
 
     if LOGO_PATH.is_file():
         try:
-            logo_bytes = LOGO_PATH.read_bytes()
-            st.image(logo_bytes, width=170)
+            # Use the real asset path rather than an HTML <img> URL.
+            st.image(
+                str(LOGO_PATH),
+                width=170,
+                caption=None,
+            )
         except Exception as exc:
             st.warning(f"Unable to display logo.png: {exc}")
     else:
